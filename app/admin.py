@@ -1,0 +1,191 @@
+from typing import List
+
+from flask import flash
+from flask_admin import AdminIndexView, expose, Admin 
+from flask_admin.actions import action
+from flask_admin.contrib.sqla import ModelView
+from flask_admin.form import rules  
+
+from sqlalchemy import select
+from sqlalchemy.sql.functions import count
+
+from wtforms import fields
+from wtforms.form import Form  
+from wtforms.widgets import HiddenInput
+
+from .models.blog import Blog
+from .models.user import User
+from .models.tag import Tag
+from .models.base import session
+from .models.email_address import EmailAddress
+from .models.page import Page
+from .models.comment import Comment
+
+#from forms import CKTextAreaField 
+
+
+class MyAdminIndexView(AdminIndexView):
+
+    @expose()
+    def index(self, *args, **kwargs):
+        users_query = select(User)
+        users_result = User.session.execute(users_query).scalars()   
+        users = [u for u in users_result]
+        blogs = {}
+        print(users)
+        for user in users:
+            _blogs = {}
+            _blog_query = select(Blog).where(Blog.author_id==user.id)
+            _count_query = select(count()).select_from(_blog_query)
+            print(Blog.session.execute(_count_query).scalar())
+            if Blog.session.execute(_count_query).scalar() >= 1:
+                blog_result = Blog.session.execute(
+                        _blog_query
+                ).scalars()
+                blogs[user.username] = blog_result
+                print(blog_result)  
+        print(blogs)
+        return self.render(self._template, users=users, blogs=blogs)
+
+admin = Admin(
+        index_view=MyAdminIndexView(
+            name='Admin',   
+            menu_icon_type="fa" ,
+            menu_icon_value="fa-solid-home"
+        ), 
+)
+
+class BaseModelView(ModelView):
+    def __init__(self, *args, **kwargs):
+        super().__init__(model=self.model, session=session, *args, **kwargs)
+
+
+class CreateBlogForm(Form):
+    title = fields.StringField()
+
+class BlogAdminView(BaseModelView):
+    model = Blog
+    column_list = ('title', 'status', 'slug', 'published_date')
+    extra_js = [
+        'https://cdn.ckeditor.com/4.6.0/standard/ckeditor.js'
+    ]
+    form_overrides = {
+ #       'content': CKTextAreaField
+    }   
+    inline_models = [Comment]
+    can_view_details = True
+    column_names = {'author.username': 'author'}
+    column_labels= {'author.username': 'author'}
+    column_details_list = (
+        'title', 'author.username', 'content', 'comments',
+    )
+    form_create_rules = [
+                rules.FieldSet(
+                    header='Add Blog',
+                    rules=[
+                        ('title', 'status'),
+                        ('slug','published_date'),
+                        ('author','comments'),
+                        ('content',)
+                    ]
+                )
+    ]
+
+
+class PageAdminView(BaseModelView):
+    model = Page
+    extra_js = [
+        'https://cdn.ckeditor.com/4.6.0/standard/ckeditor.js'
+    ]
+    can_view_details = True
+    form_overrides = {
+#        'content': CKTextAreaField
+    }
+
+
+class CreateEmailForm(Form):
+    email = fields.StringField()
+
+class EmailAdminView(BaseModelView):
+    model = EmailAddress
+    edit_modal = True
+    create_modal = True
+    
+
+class CreateTagForm(Form):
+    value = fields.StringField(nullable=True)
+
+
+class TagAdminView(BaseModelView):
+    model = Tag
+    column_list = ('value',)
+
+
+class CreateUserForm(Form):
+    username = fields.StringField()
+
+
+class UserAdminView(BaseModelView):
+    model = User
+    column_list = ('username','emails')
+    inline_models = [EmailAddress]
+
+
+class CommentAdminView(BaseModelView):
+    model = Comment
+
+    column_filters = ('author',)
+
+    form_labels = {
+        'approved': ''
+    }
+
+    form_widget_args = {
+        'approved': {
+            'hidden': True
+        }
+    }
+
+    form_create_rules = [
+        rules.FieldSet(
+            header='Create New Comment',
+            rules=[
+                'author',
+                'text',
+                'approved',
+                'blog',
+            ]
+        )
+    ]
+
+    def scaffold_sortable_columns(self,*args,**kwargs):
+        return dict()
+
+    @action(
+        'approve',
+        'Approve',
+        'Are you sure ypu want to approve all selected comments?',
+    )
+    def action_approve(self, id_list):
+        try:
+            query = Comment.query(Comment).filter(Comment.id.in_(id_list), Comment.approved == False)
+            if query.count():
+                count = query.count()
+                comments = query.all()
+                Comment.approve_comments(comments)
+                flash(f'all {count} comment{"s" if count == 1 else ""} were successfully approved')
+            else:
+                flash("if you had any comments selected they were already approved. please double check your selection and try again")
+        except Exception as e:
+            if not self.handle_view_exception(e):
+                raise
+            flash(f"there was an error approving your comments: {e.message}")
+
+
+
+admin.add_view(BlogAdminView())    
+admin.add_view(TagAdminView())    
+admin.add_view(UserAdminView()) 
+admin.add_view(EmailAdminView())
+admin.add_view(PageAdminView())
+admin.add_view(CommentAdminView())  

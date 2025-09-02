@@ -1,0 +1,177 @@
+from datetime import datetime
+import sqlalchemy as sa
+from sqlalchemy import orm
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import List, Optional
+from apiflask import Schema
+from apiflask.fields import String, Integer
+from flask_security import UserMixin, RoleMixin
+
+from .blog import BlogOutput
+from .email_address import EmailAddress, EmailInput
+from .auth_info import AuthInfo
+from .base import Base as BaseModel
+
+
+class UserInput(Schema):
+    id: int = Integer()
+    username: str = String()
+    emails: List[Optional[EmailInput]] 
+
+
+class UserOutput(Schema):
+    username: str = String()
+    emails: List[Optional[EmailInput]]
+    blogs: List[Optional[BlogOutput]]
+
+
+class RolesUsers(sa.Table):
+
+    #id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column("user_id", sa.Integer, sa.ForeignKey("users.id"))
+    role_id: Mapped[int] = mapped_column("role_id", sa.Integer, sa.ForeignKey("roles.id"))
+
+#class WebAuthn(BaseModel, sqla.WebAuthnMixin):
+#    id: Mapped[int] = mapped_column(primary_key=True)
+#    user:Mapped["User"] = relationship("User")
+  
+
+class User(BaseModel, UserMixin):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[Optional[str]] = mapped_column(sa.String(255))
+    emails: Mapped[List["EmailAddress"]] = relationship(
+            back_populates="user",
+            uselist=True
+    )
+    last_login_at:Mapped[datetime] = mapped_column(sa.DateTime(),default=datetime.now)
+    current_login_at:Mapped[Optional[datetime]] = mapped_column(sa.DateTime())
+    last_login_ip: Mapped[Optional[str]] = mapped_column(sa.String(100))
+    current_login_ip: Mapped[Optional[str]] = mapped_column(sa.String(100))
+    login_count: Mapped[int] = mapped_column(sa.Integer, default=0)
+    active: Mapped[bool] = mapped_column(sa.Boolean(), default=False)
+    premium: Mapped[bool] = mapped_column(sa.Boolean(), default=False)
+    fs_uniquifier: Mapped[str] = mapped_column(sa.String(255), unique=True, nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(sa.DateTime(), nullable=True)
+    roles = relationship(
+            "Role", 
+            secondary="roles_users", 
+            back_populates="users", 
+    )
+    #user_profile: Mapped["UserProfile"] = relationship(
+    #        back_populates="user",
+    #        uselist=False,
+    #        cascade="delete"
+    #)
+    auth_info: Mapped[AuthInfo] = relationship(
+            back_populates="user",
+            uselist=False,
+            cascade="delete"
+    )
+    comments: Mapped[List["Comment"]] = relationship(
+            'Comment',
+            back_populates='author'
+    )
+
+    blogs: Mapped[List["Blog"]] = relationship(
+            'Blog',
+            back_populates="author"
+    )
+
+    #password:Mapped[str] = mapped_column(sa.String(255))
+
+    def __init__(self, *args, **kwargs):
+        fs_uniquifier = kwargs.get("fs_uniquifier", None)
+        password = kwargs.get('password', None)
+        if fs_uniquifier is None:
+            fs_uniquifier = uuid.uuid4().hex
+        else:
+            del kwargs['fs_uniquifier']
+        if password is not None:
+            del kwargs['password']
+        auth_info = AuthInfo(password=password)
+        auth_info.password = password
+        self.auth_info = auth_info
+        self.fs_uniquifier = fs_uniquifier
+        super().__init__(*args, **kwargs)
+        
+    
+
+    def __repr__(self) -> str:
+        return f'USER<{self.id}>'
+
+    @property
+    def password(self):
+        return self.auth_info.password
+
+    @password.setter
+    def password(self, val):
+        self.auth_info.password = val
+        
+    
+    @property
+    def email(self):
+        email = self.session.scalar(
+                sa.select(EmailAddress)
+                    .where(EmailAddress.user_id==self.id)
+                    .where(EmailAddress.is_primary==True)
+        )
+        return email    
+                                
+    @email.setter
+    def email(self, email):
+        if not isinstance(email, EmailAddress):
+            e = EmailAddress(email=email)
+            e.is_primary = True
+            self.emails.append(e)
+            self.save()
+            return
+        if email.user_id != self.id:
+            raise ValueError()
+        for email in self.emails:
+            email.is_primary = False
+            email.save()
+        email.is_primary = True
+        email.save()
+
+    def save(self):
+        created = self.id is None
+        super().save()
+        if created:
+            self.auth_info = AuthInfo()
+            self.auth_info.save()
+        super().save()
+
+    @property
+    def is_authenticated(self) -> bool:
+        return False
+
+    @property
+    def is_active(self) -> bool:
+        return not self.is_anonymous
+
+    @property
+    def is_anonymous(self) -> bool:
+        return not hasattr(self, 'id')
+
+    def get_id(self) -> str | None:
+        return str(self.id)
+
+
+class AnonymousUser:
+    def get_id(self) -> str | None: return None
+    @property
+    def is_authenticated(self) -> bool: return False
+    @property
+    def is_active(self) -> bool: return False
+    @property
+    def is_anonymous(self) -> bool: return True   
+
+class Role(BaseModel, RoleMixin):
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(sa.String(255), unique=True)
+    description: Mapped[str] = mapped_column(sa.String(255))
+    users = relationship(
+            "User", 
+            secondary="roles_users", 
+            back_populates="roles", 
+    )

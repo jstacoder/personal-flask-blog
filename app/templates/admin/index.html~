@@ -1,0 +1,21 @@
+{% extends 'admin/master.html' %}
+{% block body %}
+{{ super() }}
+<div class="m4">
+	<h2 class="m2">
+		Welcome to my blog!!
+	</h2>
+	<ul>
+	  {% for username in blogs %}
+	    <li>{{ username }}</li>
+	    <li>
+	        <ul>
+		    {% for blog in blogs[username] %}
+		        <li>{{ blog.title }}</li>
+		    {% endfor %}
+		</ul>
+	    </li>
+	  {% endfor %}
+	</ul> 
+</div>
+{% endblock %}
