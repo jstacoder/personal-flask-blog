@@ -1,0 +1,10 @@
+import { ThemeProvider } from 'react-admin'
+import Admin from "../components/Admin"
+
+export default function Page(){
+    return (
+	    <ThemeProvider>
+	      <Admin/>
+	    </ThemeProvider>
+    )
+}
